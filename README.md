@@ -21,7 +21,7 @@
 | 인증 | 자체 세션(HTTP-only 쿠키) + Node `scrypt` 해시 |
 | QR | `qrcode` (PNG/SVG 서버 생성) |
 | 래스터 도면 | `sharp` (서버 PNG/JPG/TIFF 디코딩·텍스처 정규화) |
-| 테스트 | Vitest 3 (57 케이스) + HTTP 스모크 스크립트 |
+| 테스트 | Vitest 3 (58 케이스) + HTTP 스모크 스크립트 |
 
 ## 2. 실행 방법
 
@@ -43,7 +43,7 @@ npm run start             # http://localhost:3210
 
 ```bash
 npm run typecheck
-npm run test              # vitest, 57 tests
+npm run test              # vitest, 58 tests
 npm run build
 npm run smoke             # 실제 서버 기동 후 페이지/API·이미지/PDF 도면 42개 체크
 ```

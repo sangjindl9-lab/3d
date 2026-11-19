@@ -599,10 +599,17 @@ type GltfDoc = {
   meshes?: { name?: string; primitives: { attributes: Record<string, number>; indices?: number; mode?: number; material?: number }[] }[];
   materials?: {
     name?: string;
-    pbrMetallicRoughness?: { baseColorFactor?: number[]; metallicFactor?: number; roughnessFactor?: number };
+    pbrMetallicRoughness?: {
+      baseColorFactor?: number[];
+      metallicFactor?: number;
+      roughnessFactor?: number;
+      baseColorTexture?: { index: number; texCoord?: number };
+    };
     emissiveFactor?: number[];
     alphaMode?: string;
   }[];
+  textures?: { sampler?: number; source?: number }[];
+  images?: { bufferView?: number; mimeType?: string; uri?: string; name?: string }[];
 };
 
 export type DecodedModel = { meshes: MeshData[]; doc: GltfDoc; glb: boolean };
@@ -737,6 +744,30 @@ function transformPoint(m: number[], x: number, y: number, z: number): [number, 
   ];
 }
 
+/** glTF 머티리얼의 baseColor 텍스처를 PNG/JPEG 바이트로 해석한다(내장 bufferView 또는 data URI). */
+function resolveTexture(doc: GltfDoc, bin: Buffer, textureIndex?: number): MeshTexture | null {
+  if (textureIndex === undefined) return null;
+  const texture = doc.textures?.[textureIndex];
+  if (!texture || texture.source === undefined) return null;
+  const image = doc.images?.[texture.source];
+  if (!image) return null;
+  const mimeType = image.mimeType ?? "image/png";
+  if (image.bufferView !== undefined) {
+    const view = doc.bufferViews[image.bufferView];
+    if (!view) return null;
+    const start = view.byteOffset ?? 0;
+    const end = start + view.byteLength;
+    if (start < 0 || end > bin.length) return null;
+    return { data: Buffer.from(bin.subarray(start, end)), mimeType, name: image.name };
+  }
+  if (image.uri?.startsWith("data:")) {
+    const base64 = image.uri.split(",")[1] ?? "";
+    if (!base64) return null;
+    return { data: Buffer.from(base64, "base64"), mimeType: image.uri.slice(5, image.uri.indexOf(";")) || mimeType, name: image.name };
+  }
+  return null;
+}
+
 function extractMeshes(doc: GltfDoc, bin: Buffer): MeshData[] {
   const result: MeshData[] = [];
   const nodes = doc.nodes ?? [];
@@ -775,12 +806,18 @@ function extractMeshes(doc: GltfDoc, bin: Buffer): MeshData[] {
         const indices = prim.indices !== undefined ? new Uint32Array(readAccessor(doc, bin, prim.indices)) : Uint32Array.from({ length: positions.length / 3 }, (_, i) => i);
         const mat = prim.material !== undefined ? doc.materials?.[prim.material] : undefined;
         const baseColor = mat?.pbrMetallicRoughness?.baseColorFactor;
+        const uvAccessorIndex = prim.attributes.TEXCOORD_0;
+        const uvs = uvAccessorIndex !== undefined ? readAccessor(doc, bin, uvAccessorIndex) : undefined;
+        // 원본 GLB 의 baseColor 텍스처를 그대로 보존한다(재인코딩 시 텍스처 유실 방지).
+        const texture = resolveTexture(doc, bin, mat?.pbrMetallicRoughness?.baseColorTexture?.index);
         const nameBase = (nodes.length > 1 ? meshDef.name ?? node.name : meshDef.name ?? node.name) ?? `Part_${result.length + 1}`;
         result.push({
           name: meshDef.primitives.length > 1 ? `${nameBase}_${pi + 1}` : nameBase,
           positions,
           normals,
           indices,
+          ...(uvs && uvs.length === positions.length / 3 * 2 ? { uvs } : {}),
+          ...(texture ? { texture } : {}),
           color: baseColor ? [baseColor[0], baseColor[1], baseColor[2]] : undefined,
           metalness: mat?.pbrMetallicRoughness?.metallicFactor,
           roughness: mat?.pbrMetallicRoughness?.roughnessFactor,

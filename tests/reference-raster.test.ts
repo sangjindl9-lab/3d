@@ -280,6 +280,29 @@ describe("텍스처·UV 유틸", () => {
     expect(decodeGlb(glb).meshes.length).toBe(1);
   });
 
+  it("텍스처가 있는 GLB 를 다시 읽어도 UV·텍스처가 보존된다", async () => {
+    const png = await sharp({ create: { width: 16, height: 16, channels: 3, background: "#2f6f8f" } }).png().toBuffer();
+    const geom = texturedBoxGeom([1, 0.6, 0.05]);
+    const source = {
+      name: "TEXTURED_BLOCK",
+      positions: geom.positions,
+      normals: geom.normals,
+      indices: geom.indices,
+      uvs: geom.uvs,
+      texture: { data: png, mimeType: "image/png" },
+    };
+    const glb = encodeGlb([source]);
+    const decoded = decodeGlb(glb);
+    expect(decoded.meshes).toHaveLength(1);
+    expect(decoded.meshes[0].uvs?.length).toBe((geom.positions.length / 3) * 2);
+    expect(decoded.meshes[0].texture?.mimeType).toBe("image/png");
+    expect(decoded.meshes[0].texture?.data.equals(png)).toBe(true);
+    const again = glbJson(encodeGlb(decoded.meshes));
+    expect(again.images?.length).toBe(1);
+    const texturedAgain = again.meshes!.filter((m) => m.primitives[0].attributes.TEXCOORD_0 !== undefined);
+    expect(texturedAgain.length).toBe(1);
+  });
+
   it("래스터 분석은 이미지마다 다른 지문과 잉크 비율을 낸다", async () => {
     const a = await decodeRaster(await renderPng(DRAWING_A), 192);
     const b = await decodeRaster(await renderPng(DRAWING_B), 192);
