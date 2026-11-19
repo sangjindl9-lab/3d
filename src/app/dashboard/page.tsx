@@ -118,7 +118,9 @@ export default async function DashboardPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {own.map((project) => {
               const status = STATUS[project.status] ?? STATUS.DRAFT;
-              const thumb = fileUrl(project.thumbnailPath);
+              const thumbBase = fileUrl(project.thumbnailPath);
+              // 썸네일은 같은 경로로 재생성되므로 갱신 시각을 붙여 브라우저 캐시를 무효화한다.
+              const thumb = thumbBase ? `${thumbBase}?v=${project.updatedAt.getTime()}` : null;
               return (
                 <div key={project.id} className="card group overflow-hidden">
                   <Link href={`/dashboard/projects/${project.id}`} className="block">
@@ -186,7 +188,7 @@ export default async function DashboardPage() {
                 <div className="relative aspect-[16/9] bg-[#0a111b]">
                   {fileUrl(project.thumbnailPath) ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={fileUrl(project.thumbnailPath)!} alt={project.title} className="h-full w-full object-cover" />
+                    <img src={`${fileUrl(project.thumbnailPath)!}?v=${project.updatedAt.getTime()}`} alt={project.title} className="h-full w-full object-cover" />
                   ) : null}
                   <div className="absolute left-2 top-2 flex gap-1">
                     <span className="badge badge-accent">데모</span>

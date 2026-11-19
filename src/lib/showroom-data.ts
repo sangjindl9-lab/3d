@@ -52,6 +52,12 @@ export type BuildPayloadOptions = {
   forShare?: boolean;
 };
 
+/** 파일 URL 에 변경 시각 기반 버전을 붙여 이전 모델/썸네일이 캐시에서 보이는 문제를 막는다. */
+function withVersion(url: string | null, updatedAt: Date): string | null {
+  if (!url) return null;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${updatedAt.getTime()}`;
+}
+
 export async function buildShowroomPayload(projectId: string, options: BuildPayloadOptions = {}): Promise<ShowroomPayload | null> {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -127,8 +133,9 @@ export async function buildShowroomPayload(projectId: string, options: BuildPayl
       aiMode: project.aiMode,
       aiAnalysis,
       stats,
-      modelUrl: fileUrl(project.modelPath),
-      thumbnailUrl: fileUrl(project.thumbnailPath),
+      // 모델/참고 이미지는 경로가 같아도 내용이 바뀌므로 버전 쿼리로 브라우저 캐시를 무효화한다.
+      modelUrl: withVersion(fileUrl(project.modelPath), project.updatedAt),
+      thumbnailUrl: withVersion(fileUrl(project.thumbnailPath), project.updatedAt),
       referenceImageUrl: project.referenceImageUrl,
       createdAt: project.createdAt.toISOString(),
       updatedAt: project.updatedAt.toISOString(),

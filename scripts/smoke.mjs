@@ -192,6 +192,70 @@ try {
     check("프로젝트 정리", del.status === 200, `HTTP ${del.status}`);
   }
 
+  // 5b. 이미지·PDF 도면 → 이미지 기반 고유 3D 릴리프
+  async function uploadSampleProject(title, samplePath, filename, mime) {
+    const createRes = await req("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, industry: "MANUFACTURING", description: "smoke-2d" }),
+    });
+    const createdJson = await createRes.json();
+    const id = createdJson.project?.id;
+    if (!id) return null;
+    const sampleRes = await fetch(`${BASE}/api/files/samples/${samplePath}`);
+    const sampleBuf = Buffer.from(await sampleRes.arrayBuffer());
+    const form = new FormData();
+    form.append("file", new Blob([sampleBuf], { type: mime }), filename);
+    const upload = await req(`/api/projects/${id}/upload`, { method: "POST", body: form });
+    const process = await req(`/api/projects/${id}/process`, { method: "POST" });
+    const payload = await req(`/api/projects/${id}`);
+    return { id, upload: await upload.json(), process: await process.json(), payload: await payload.json() };
+  }
+
+  const pngA = await uploadSampleProject("스모크 PNG 도면 A", "sample-drawing-a.png", "smoke-a.png", "image/png");
+  if (pngA) {
+    check("PNG 업로드 · 파이프라인 완료", ["OK", "WARN"].includes(pngA.process.status), `상태 ${pngA.process.status}`);
+    check("PNG → 이미지 기반 3D 릴리프 모드", pngA.payload.project?.renderMode === "AI_REFERENCE_3D", pngA.payload.project?.renderMode);
+    const pngParts = pngA.payload.parts ?? [];
+    check("PNG 도면 원본 블록 부품", pngParts.some((p) => p.name === "도면 원본 블록"), `부품 ${pngParts.length}개`);
+    check("PNG 윤곽 돌출 부품", pngParts.some((p) => p.name?.includes("주 윤곽")), pngParts.map((p) => p.name).slice(0, 4).join(" / "));
+    const refUrl = pngA.payload.project?.referenceImageUrl;
+    const refRes = refUrl ? await req(refUrl) : null;
+    check("PNG 참고 이미지 서", refRes?.status === 200 && (refRes.headers.get("content-type") ?? "").includes("image/png"), `${refRes?.status}, ${refRes?.headers.get("content-type")}`);
+    const glbRes = await req(`/api/files/projects/${pngA.id}/model.glb`);
+    const glbBuf = Buffer.from(await glbRes.arrayBuffer());
+    const glbText = glbBuf.toString("latin1");
+    check("GLB 에 도면 텍스처·UV 내장", glbRes.status === 200 && glbText.includes("TEXCOORD_0") && glbText.includes('"images"'), `${glbBuf.length} bytes`);
+
+    const pngB = await uploadSampleProject("스모크 PNG 도면 B", "sample-drawing-b.png", "smoke-b.png", "image/png");
+    if (pngB) {
+      const statsOf = (project) => (typeof project?.stats === "string" ? JSON.parse(project.stats) : project?.stats ?? {});
+      const statsA = statsOf(pngA.payload.project);
+      const statsB = statsOf(pngB.payload.project);
+      check("서로 다른 PNG → 서로 다른 3D 메시", statsA.triangleCount !== statsB.triangleCount, `A ${statsA.triangleCount} / B ${statsB.triangleCount} 삼각형`);
+      check("서로 다른 PNG → 서로 다른 부품", pngA.payload.parts?.length !== pngB.payload.parts?.length, `A ${pngA.payload.parts?.length} / B ${pngB.payload.parts?.length} 부품`);
+      await req(`/api/projects/${pngB.id}`, { method: "DELETE" });
+    }
+
+    const pdfProject = await uploadSampleProject("스모크 PDF 도면", "sample-drawing.pdf", "smoke-drawing.pdf", "application/pdf");
+    if (pdfProject) {
+      const pdfOk = pdfProject.process.status === "OK";
+      if (pdfOk) {
+        check("PDF → 첫 페이지 렌더 후 이미지 기반 3D", pdfProject.payload.project?.renderMode === "AI_REFERENCE_3D" && Boolean(pdfProject.payload.project?.referenceImageUrl), pdfProject.payload.project?.renderMode);
+      } else {
+        const analysis = pdfProject.payload.project?.aiAnalysis ?? {};
+        check(
+          "PDF 렌더러 미설치 시 안전 폴백 · 명확한 안내",
+          pdfProject.process.status === "WARN" && JSON.stringify(analysis.uncertainties ?? []).includes("PDF 렌더러"),
+          `상태 ${pdfProject.process.status}`,
+        );
+      }
+      await req(`/api/projects/${pdfProject.id}`, { method: "DELETE" });
+    }
+
+    await req(`/api/projects/${pngA.id}`, { method: "DELETE" });
+  }
+
   // 6. 로그아웃
   const logout = await req("/api/auth/logout", { method: "POST" });
   check("로그아웃", logout.status === 200, `HTTP ${logout.status}`);

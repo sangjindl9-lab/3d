@@ -20,7 +20,8 @@
 | DB/ORM | Prisma 6 + SQLite (`DATABASE_URL="file:./dev.db"`) |
 | 인증 | 자체 세션(HTTP-only 쿠키) + Node `scrypt` 해시 |
 | QR | `qrcode` (PNG/SVG 서버 생성) |
-| 테스트 | Vitest 3 (46 케이스) + HTTP 스모크 스크립트 |
+| 래스터 도면 | `sharp` (서버 PNG/JPG/TIFF 디코딩·텍스처 정규화) |
+| 테스트 | Vitest 3 (57 케이스) + HTTP 스모크 스크립트 |
 
 ## 2. 실행 방법
 
@@ -42,12 +43,14 @@ npm run start             # http://localhost:3210
 
 ```bash
 npm run typecheck
-npm run test              # vitest, 46 tests
+npm run test              # vitest, 57 tests
 npm run build
-npm run smoke             # 실제 서버 기동 후 페이지/API 33개 체크
+npm run smoke             # 실제 서버 기동 후 페이지/API·이미지/PDF 도면 42개 체크
 ```
 
 `npm run smoke` 는 3210 포트에 프로덕션 서버를 직접 띄웁니다.
+
+**2D 도면(PDF) 요구사항** — PNG/JPG/TIFF 는 `sharp` 만으로 동작합니다. PDF 첫 페이지 렌더는 `pdftoppm`(poppler) → `python3`(PyMuPDF 또는 pypdfium2) → `gs`(Ghostscript) 순으로 시도하며, 모두 없으면 원본 도면 패널 폴백과 안내 문구를 남깁니다. PDF 를 이미지로 내보내 업로드하면 렌더러 없이도 3D 릴리프가 생성됩니다.
 
 ## 3. 데모 계정
 
@@ -76,7 +79,7 @@ npm run smoke             # 실제 서버 기동 후 페이지/API 33개 체크
 1. **업로드** — 드래그앤드롭, 다중(최대 8개), XHR 진행률, 80MB 제한
 2. **형식 자동 분석** — 매직 바이트 + 확장자 + 2D/3D 판별 + SHA-256 무결성, 불일치 경고
 3. **3D 변환·표시** — glTF 2.0 GLB 직접 인코딩, 메시/정점/삼각형 통계, 최적화 리포트
-4. **2D AI 보조 3D** — DXF 엔티티/레이어 파싱 → 참고용 relief 3D, JPG/PNG/PDF/TIFF 도면 패널, `참고용` 배지·불확실 항목 고지·3D 모델 추가 업로드 버튼
+4. **2D AI 보조 3D** — DXF 엔티티/레이어 파싱 → 참고용 relief 3D, PNG/JPG/TIFF 는 서버에서 픽셀을 직접 디코딩한 윤곽 돌출 + 원본 텍스처 도면 블록, PDF 는 첫 페이지 PNG 렌더 후 같은 파이프라인, `참고용` 배지·불확실 항목 고지·3D 모델 추가 업로드 버튼
 5. **실감형 3D 쇼룸** — Three.js 실시간 렌더, PBR, 그림자, 절차적 PMREM 환경맵, 4종 배경
 6. **분해도** — 조립 중심 기반 방향 벡터 자동 계산, 전체 슬라이더, 부품별 방향/거리 편집, TransformControls 3D 드래그
 7. **조립 애니메이션** — 스텝 타임라인, 재생/일시정지/정지/속도/스텝 이동
@@ -153,8 +156,8 @@ CAD 도면 작성, 2D 제도, 3D 부품 설계, 정밀 치수 수정, 파라메�
 | STL | 3D | 바이너리/ASCII 파싱, 연결 요소 기반 부품 분리 |
 | OBJ | 3D | o/g 그룹 → 부품, fan 삼각분할 |
 | DXF | 2D | 엔티티/레이어/Extents 파싱 → 참고용 3D relief |
-| PNG / JPG / TIFF | 2D | 헤더 분석 → 3D 도면 패널 (PNG/JPG 텍스처) |
-| PDF | 2D | 페이지/메타 분석 → 도면 패널, 원문은 브라우저 PDF 뷰어 |
+| PNG / JPG / TIFF | 2D | sharp 디코딩 → 잉크 윤곽 추출 → 원본 텍스처 블록 + 윤곽 돌출 3D 릴리프 |
+| PDF | 2D | 첫 페이지 PNG 렌더(pdftoppm/ghostscript/python3) → 이미지 윤곽 기반 3D 릴리프 |
 | DWG | 2D | 버전 판별, DXF 변환 권장 |
 | STEP / IGES / IFC | 3D CAD | 스키마·엔티티·제품명 메타 분석, **외부 변환기 필요** |
 | FBX / 3MF | 3D | 메타 분석, **외부 변환기 필요** |
@@ -172,7 +175,7 @@ eum3d-showroom-pro/
 │   ├── schema.prisma          데이터 모델
 │   ├── seed.ts                5개 데모 + 고객사 3곳 + 계정 + 공유 링크
 │   └── seed-models.ts         절차적 3D 데모 모델(금형/감속기/분전반/배관/DXF)
-├── scripts/smoke.mjs          HTTP 스모크 테스트(33 checks)
+├── scripts/smoke.mjs          HTTP 스모크 테스트(42 checks)
 ├── src/
 │   ├── app/                   App Router 페이지 · API
 │   ├── components/showroom/
@@ -209,7 +212,7 @@ eum3d-showroom-pro/
 ## 10. 알려진 제약 · 다음 단계
 
 - STEP/IGES 등 B-Rep 변환은 외부 CAD 커널(예: CAD Exchanger, Autodesk Platform Services) 연동이 필요합니다. 현재는 형식 분석 + 안내만 제공합니다.
-- PDF/TIFF 은 도면 패널 전시이며 형상 복원은 하지 않습니다. 정확한 형상은 GLB/STL/OBJ 업로드가 필요합니다.
+- PNG/JPG/TIFF/PDF 의 3D 는 픽셀 윤곽을 돌출시킨 **참고용 시각화**이며 치수·형상을 복원하지 않습니다. 정확한 형상은 GLB/STL/OBJ 업로드가 필요합니다.
 - 브라우저가 MP4 인코딩(avc1)을 지원하지 않으면 360° 영상은 WebM 으로 저장됩니다. 서버 FFmpeg 변환은 미구현입니다.
 - STL 은 재질·부품명 정보가 없어 재질은 추정값으로 표시합니다.
 - 공유 페이지는 읽기 전용이며 원본 파일 다운로드와 편집 도구를 제공하지 않습니다.

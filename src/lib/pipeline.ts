@@ -5,7 +5,9 @@ import { decodeGlb, decodeGltf, encodeGlb, meshStats, optimizeMeshes, partBounds
 import { parseStl } from "./parsers/stl";
 import { parseObj } from "./parsers/obj";
 import { parseDxf } from "./parsers/dxf";
-import { buildDxfReference, buildDrawingPanel, analyzeMeshStructure, type AiAnalysis, type ReferencePartMeta } from "./reference";
+import { buildDxfReference, buildDrawingPanel, buildRasterReference, analyzeMeshStructure, type AiAnalysis, type ReferencePartMeta } from "./reference";
+import { decodeRaster, rasterPreviewPng, rasterThumbJpeg, type RasterImage } from "./raster";
+import { renderPdfFirstPage } from "./pdf";
 import { industryLabel, materialPreset } from "./constants";
 import { guessMaterial, guessMoldRole, guessMotion, inferPartMeta, partDirection } from "./partMeta";
 import { buildDefaultSequences } from "./sequences";
@@ -28,6 +30,21 @@ export type PipelineOutcome = {
   runId: string;
   stages: { step: number; key: string; label: string; status: string; detail: string | null }[];
 };
+
+const RASTER_GRID = 384;
+
+function totalRects(image: RasterImage): number {
+  return image.components.reduce((acc, c) => acc + c.rects.length, 0);
+}
+
+/** 릴리프 사각형 수가 과도하면 그리드를 낮춰 다시 디코딩한다(이미지마다 다른 결과 유지). */
+async function decodeWithBudget(buffer: Buffer): Promise<RasterImage> {
+  let image = await decodeRaster(buffer, RASTER_GRID);
+  if (totalRects(image) > 6500) image = await decodeRaster(buffer, 232);
+  if (totalRects(image) > 12000) image = await decodeRaster(buffer, 160);
+  if (totalRects(image) > 16000) image = await decodeRaster(buffer, 128);
+  return image;
+}
 
 export async function runPipeline(projectId: string): Promise<PipelineOutcome> {
   const project = await prisma.project.findUnique({
@@ -151,6 +168,8 @@ export async function runPipeline(projectId: string): Promise<PipelineOutcome> {
   let convertGuidance = "";
   let needsExternal = false;
   let referenceImageUrl: string | null = null;
+  /** 2D 도면을 실제 이미지로 확보한 경우(썸네일 미리보기·텍스처) */
+  let referencePreview: Buffer | null = null;
 
   try {
     if (["GLB", "GLTF"].includes(analysis.formatId)) {
@@ -218,7 +237,70 @@ export async function runPipeline(projectId: string): Promise<PipelineOutcome> {
       aiAnalysis = ref.analysis;
       renderMode = "AI_REFERENCE_3D";
       structureDetail = `DXF 엔티티 ${drawing.entities.length}개 · 레이어 ${drawing.layers.length}개 · 참고용 3D 형상 생성`;
-    } else if (["PNG", "JPG", "TIFF", "PDF", "DWG"].includes(analysis.formatId)) {
+    } else if (["PNG", "JPG", "TIFF"].includes(analysis.formatId)) {
+      const dimensions = analysis.meta as { width?: number; height?: number; pageCount?: number };
+      const raster = await decodeWithBudget(buffer);
+      const preview = await rasterPreviewPng(buffer);
+      const stored = await saveProjectArtifact(projectId, "reference-page-1.png", preview);
+      referencePreview = preview;
+      referenceImageUrl = `${fileUrl(stored)}?v=${run.id}`;
+      const ref = buildRasterReference({
+        filename: chosen.originalName,
+        formatLabel: analysis.formatLabel,
+        image: raster,
+        texture: preview,
+      });
+      meshes = ref.meshes;
+      referenceParts = ref.parts;
+      aiAnalysis = ref.analysis;
+      renderMode = "AI_REFERENCE_3D";
+      structureDetail = `이미지 윤곽 분석 · ${raster.width}×${raster.height} 그리드 · 잉크 ${(raster.inkRatio * 100).toFixed(1)}% · 형상군 ${raster.components.length}개 · 참고용 3D 릴리프 ${meshes.length}개 부품`;
+      if (!raster.hasInk) {
+        await mark("STRUCTURE", "WARN", `${structureDetail} · 윤곽 미검출(원본 텍스처 블록만 표시${dimensions.width ? `, ${dimensions.width}×${dimensions.height}px` : ""})`);
+      } else {
+        await mark("STRUCTURE", "OK", structureDetail);
+      }
+    } else if (analysis.formatId === "PDF") {
+      const dimensions = analysis.meta as { width?: number; height?: number; pageCount?: number };
+      const rendered = await renderPdfFirstPage(buffer);
+      if (!rendered) {
+        const ref = buildDrawingPanel({
+          filename: chosen.originalName,
+          formatLabel: analysis.formatLabel,
+          width: dimensions.width ?? null,
+          height: dimensions.height ?? null,
+          pageCount: dimensions.pageCount ?? null,
+          notice:
+            "서버에 PDF 렌더러(pdftoppm·Ghostscript·python3 등)가 없어 첫 페이지를 이미지로 변환하지 못했습니다. 원본 도면 패널만 표시하며 3D 형상은 만들지 않았습니다. PDF 를 PNG/JPG 로 내보내 다시 업로드하면 3D 릴리프가 생성됩니다.",
+        });
+        meshes = ref.meshes;
+        referenceParts = ref.parts;
+        aiAnalysis = ref.analysis;
+        renderMode = "AI_REFERENCE_2D";
+        structureDetail = `PDF 첫 페이지 렌더 실패 · 원본 도면 패널만 표시`;
+        await mark("STRUCTURE", "WARN", `${structureDetail} · PDF 렌더러 미설치`);
+      } else {
+        const raster = await decodeWithBudget(rendered.png);
+        const preview = await rasterPreviewPng(rendered.png);
+        const stored = await saveProjectArtifact(projectId, "reference-page-1.png", preview);
+        referencePreview = preview;
+        referenceImageUrl = `${fileUrl(stored)}?v=${run.id}`;
+        const ref = buildRasterReference({
+          filename: chosen.originalName,
+          formatLabel: analysis.formatLabel,
+          image: raster,
+          texture: preview,
+          pageCount: rendered.pageCount ?? dimensions.pageCount ?? null,
+          sourceNote: `${rendered.renderer} 로 첫 페이지를 ${raster.sourceWidth}×${raster.sourceHeight}px PNG 로 렌더`,
+        });
+        meshes = ref.meshes;
+        referenceParts = ref.parts;
+        aiAnalysis = ref.analysis;
+        renderMode = "AI_REFERENCE_3D";
+        structureDetail = `PDF 첫 페이지 렌더(${rendered.renderer}) → 이미지 윤곽 기반 3D 릴리프 · 잉크 ${(raster.inkRatio * 100).toFixed(1)}% · 형상군 ${raster.components.length}개 · 부품 ${meshes.length}개`;
+        await mark("STRUCTURE", raster.hasInk ? "OK" : "WARN", structureDetail);
+      }
+    } else if (analysis.formatId === "DWG") {
       const dimensions = analysis.meta as { width?: number; height?: number; pageCount?: number };
       const ref = buildDrawingPanel({
         filename: chosen.originalName,
@@ -226,18 +308,15 @@ export async function runPipeline(projectId: string): Promise<PipelineOutcome> {
         width: dimensions.width ?? null,
         height: dimensions.height ?? null,
         pageCount: dimensions.pageCount ?? null,
+        notice:
+          "DWG 는 바이너리 형식이라 서버에서 직접 해석하지 못했습니다. 원본 도면 패널만 표시하며 3D 형상은 만들지 않았습니다. DXF 또는 PDF/PNG 로 변환해 다시 업로드하면 윤곽 기반 3D 릴리프가 생성됩니다.",
       });
       meshes = ref.meshes;
       referenceParts = ref.parts;
       aiAnalysis = ref.analysis;
       renderMode = "AI_REFERENCE_2D";
-      referenceImageUrl = ["PNG", "JPG"].includes(analysis.formatId) ? fileUrl(chosen.storedPath) : null;
       structureDetail = `2D 도면 패널 구성 · 원본 ${analysis.formatLabel}${dimensions.width ? ` · ${dimensions.width}×${dimensions.height}px` : ""}`;
-      if (analysis.formatId === "DWG") {
-        await mark("STRUCTURE", "WARN", `${structureDetail} · DWG 직접 해석 미지원(DXF 변환 권장)`);
-      } else {
-        await mark("STRUCTURE", "OK", structureDetail);
-      }
+      await mark("STRUCTURE", "WARN", `${structureDetail} · DWG 직접 해석 미지원(DXF 변환 권장)`);
     } else {
       needsExternal = true;
       convertGuidance = `${analysis.formatLabel} 형식입니다. 형식·메타 분석은 완료했지만, B-Rep 메시 변환은 외부 CAD 변환기(또는 공식 API)가 필요합니다. STEP/GLB/STL/OBJ 로 변환 후 다시 업로드하면 즉시 3D 쇼룸을 만들 수 있습니다.`;
@@ -312,15 +391,34 @@ export async function runPipeline(projectId: string): Promise<PipelineOutcome> {
   // 8. 썸네일
   await mark("THUMBNAIL", "RUNNING", "");
   const stats = meshStats(meshes);
+  let previewDataUri: string | null = null;
+  if (referencePreview) {
+    try {
+      const jpeg = await rasterThumbJpeg(referencePreview, 640);
+      previewDataUri = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+    } catch {
+      previewDataUri = null;
+    }
+  }
+  const fingerprint =
+    aiAnalysis?.signature ??
+    `MESH|${meshes.map((m) => m.name).join(",")}|${stats.vertexCount}|${stats.triangleCount}|${stats.size.map((v) => v.toFixed(3)).join("x")}`;
   const svg = buildThumbnailSvg({
     title: project.title,
     industry: industryLabel(project.industry),
     subtitle: `${analysis.formatLabel} · 부품 ${meshes.length}개 · ${project.isDemo ? "데모" : "프로젝트"}`,
     accent: analysis.kind === "2D" ? "#f59e0b" : "#38bdf8",
     badge: analysis.kind === "2D" ? "참고용 시각화" : "3D SHOWROOM",
+    preview: previewDataUri,
+    fingerprint,
+    lines: [
+      `정점 ${stats.vertexCount.toLocaleString()}개 · 삼각형 ${stats.triangleCount.toLocaleString()}개`,
+      `크기 ${(stats.size[0] * 1000).toFixed(0)} × ${(stats.size[1] * 1000).toFixed(0)} × ${(stats.size[2] * 1000).toFixed(0)} mm`,
+      referenceParts.length > 0 ? `부품: ${referenceParts.slice(0, 3).map((p) => p.name).join(" / ")}` : `파일 지문 ${fingerprint.slice(0, 12)}`,
+    ],
   });
   const thumbnailPath = await saveThumbnail(projectId, svg, "svg");
-  await mark("THUMBNAIL", "OK", "thumbnail.svg 생성 (뷰어 캡처로 교체 가능)");
+  await mark("THUMBNAIL", "OK", previewDataUri ? "thumbnail.svg 생성 (도면 원본 미리보기 포함)" : "thumbnail.svg 생성 (메시 측정치·지문 포함)");
 
   // 9. 저장
   await mark("SAVE", "RUNNING", "");

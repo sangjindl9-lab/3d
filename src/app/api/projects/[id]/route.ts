@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { actor, fail, json, parseBody } from "@/lib/api";
 import { canEditProject, canViewProject } from "@/lib/permissions";
 import type { EnginePart } from "@/components/showroom/engine";
-import { STORAGE_ROOT } from "@/lib/storage";
+import { STORAGE_ROOT, fileUrl } from "@/lib/storage";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -45,6 +45,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     moldRole: p.moldRole,
     motionGroup: p.motionGroup,
   }));
+  const parseJson = (raw: string | null): Record<string, unknown> => {
+    try {
+      return JSON.parse(raw ?? "{}") as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const version = project.updatedAt.getTime();
   return json({
     project: {
       id: project.id,
@@ -52,6 +60,16 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       status: project.status,
       template: project.template,
       background: project.background,
+      sourceType: project.sourceType,
+      renderMode: project.renderMode,
+      isAiReference: project.isAiReference,
+      aiMode: project.aiMode,
+      aiAnalysis: parseJson(project.aiAnalysis),
+      stats: parseJson(project.stats),
+      // 같은 경로로 재생성되는 자산은 버전 쿼리로 브라우저 캐시를 무효화한다.
+      modelUrl: project.modelPath ? `${fileUrl(project.modelPath)}?v=${version}` : null,
+      referenceImageUrl: project.referenceImageUrl,
+      thumbnailUrl: project.thumbnailPath ? `${fileUrl(project.thumbnailPath)}?v=${version}` : null,
       share: project.shareLinks[0]
         ? {
             slug: project.shareLinks[0].slug,

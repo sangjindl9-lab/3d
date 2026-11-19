@@ -3,11 +3,15 @@
 
 export type Rgb = [number, number, number];
 
+export type MeshTexture = { data: Buffer; mimeType: string; name?: string };
+
 export type MeshData = {
   name: string;
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
+  uvs?: Float32Array;
+  texture?: MeshTexture;
   color?: Rgb;
   metalness?: number;
   roughness?: number;
@@ -16,7 +20,7 @@ export type MeshData = {
   extras?: Record<string, unknown>;
 };
 
-export type GeomArrays = { positions: Float32Array; normals: Float32Array; indices: Uint32Array };
+export type GeomArrays = { positions: Float32Array; normals: Float32Array; indices: Uint32Array; uvs?: Float32Array };
 
 const COMPONENTS: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
 const TYPES: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
@@ -32,24 +36,28 @@ export function emptyGeom(): GeomArrays {
 export function mergeGeoms(list: GeomArrays[]): GeomArrays {
   let vertexCount = 0;
   let indexCount = 0;
+  let hasUv = false;
   for (const g of list) {
     vertexCount += g.positions.length / 3;
     indexCount += g.indices.length;
+    if (g.uvs && g.uvs.length > 0) hasUv = true;
   }
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
+  const uvs = hasUv ? new Float32Array(vertexCount * 2) : undefined;
   const indices = new Uint32Array(indexCount);
   let vOff = 0;
   let iOff = 0;
   for (const g of list) {
     positions.set(g.positions, vOff);
     normals.set(g.normals, vOff);
+    if (uvs && g.uvs) uvs.set(g.uvs, (vOff / 3) * 2);
     const base = vOff / 3;
     for (let i = 0; i < g.indices.length; i++) indices[iOff + i] = g.indices[i] + base;
     vOff += g.positions.length;
     iOff += g.indices.length;
   }
-  return { positions, normals, indices };
+  return uvs ? { positions, normals, indices, uvs } : { positions, normals, indices };
 }
 
 export function makeMesh(name: string, geoms: GeomArrays[], material: Partial<MeshData> = {}): MeshData {
@@ -59,6 +67,8 @@ export function makeMesh(name: string, geoms: GeomArrays[], material: Partial<Me
     positions: merged.positions,
     normals: merged.normals,
     indices: merged.indices,
+    ...(merged.uvs ? { uvs: merged.uvs } : {}),
+    ...(material.texture ? { texture: material.texture } : {}),
     color: material.color ?? [0.62, 0.66, 0.71],
     metalness: material.metalness ?? 0.85,
     roughness: material.roughness ?? 0.35,
@@ -126,6 +136,64 @@ function quadFaces(points: Vec3[], faces: { idx: [number, number, number, number
     indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+}
+
+/**
+ * 정면(+Z) 면에 이미지가 정확히 1:1 로 매핑되는 직육면체.
+ * 나머지 면은 이미지 가장자리 색을 샘플링하도록 UV 를 고정한다(테두리 늘어남 방지).
+ */
+export function texturedBoxGeom(size: Vec3, center: Vec3 = [0, 0, 0]): GeomArrays {
+  const [sx, sy, sz] = size;
+  const [cx, cy, cz] = center;
+  const hx = sx / 2;
+  const hy = sy / 2;
+  const hz = sz / 2;
+  const p: Vec3[] = [
+    [cx - hx, cy - hy, cz - hz],
+    [cx + hx, cy - hy, cz - hz],
+    [cx + hx, cy + hy, cz - hz],
+    [cx - hx, cy + hy, cz - hz],
+    [cx - hx, cy - hy, cz + hz],
+    [cx + hx, cy - hy, cz + hz],
+    [cx + hx, cy + hy, cz + hz],
+    [cx - hx, cy + hy, cz + hz],
+  ];
+  // glTF UV 원점은 좌상단(v=0). 정면은 이미지 전체를 뒤집힘 없이 매핑한다.
+  const frontUv = [
+    [0, 1],
+    [1, 1],
+    [1, 0],
+    [0, 0],
+  ];
+  const edge = [0.02, 0.02] as [number, number];
+  const faces: { idx: [number, number, number, number]; n: Vec3; uv: [number, number][] }[] = [
+    { idx: [4, 5, 6, 7], n: [0, 0, 1], uv: frontUv as [number, number][] },
+    { idx: [1, 0, 3, 2], n: [0, 0, -1], uv: [edge, edge, edge, edge] },
+    { idx: [5, 1, 2, 6], n: [1, 0, 0], uv: [edge, edge, edge, edge] },
+    { idx: [0, 4, 7, 3], n: [-1, 0, 0], uv: [edge, edge, edge, edge] },
+    { idx: [7, 6, 2, 3], n: [0, 1, 0], uv: [edge, edge, edge, edge] },
+    { idx: [0, 1, 5, 4], n: [0, -1, 0], uv: [edge, edge, edge, edge] },
+  ];
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (const face of faces) {
+    const base = positions.length / 3;
+    face.idx.forEach((i, fi) => {
+      const v = p[i];
+      positions.push(v[0], v[1], v[2]);
+      normals.push(face.n[0], face.n[1], face.n[2]);
+      uvs.push(face.uv[fi][0], face.uv[fi][1]);
+    });
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    indices: new Uint32Array(indices),
+    uvs: new Float32Array(uvs),
+  };
 }
 
 /** 임의 방향 박스 (세그먼트 기반 3D 도면 relief 에 사용) */
@@ -355,7 +423,7 @@ export function partBounds(mesh: MeshData): { center: [number, number, number]; 
   };
 }
 
-/** glTF 2.0 GLB 인코딩 */
+/** glTF 2.0 GLB 인코딩 (UV·내장 텍스처 포함) */
 export function encodeGlb(meshes: MeshData[], generator = "EUM 3D SHOWROOM PRO"): Buffer {
   const chunks: Buffer[] = [];
   let offset = 0;
@@ -371,14 +439,16 @@ export function encodeGlb(meshes: MeshData[], generator = "EUM 3D SHOWROOM PRO")
   const materials: Record<string, unknown>[] = [];
   const meshDefs: Record<string, unknown>[] = [];
   const nodes: Record<string, unknown>[] = [];
+  const images: { bufferView: number; mimeType: string; name?: string }[] = [];
+  const textures: { sampler: number; source: number }[] = [];
 
-  const pushView = (data: Buffer, target: number) => {
+  const pushView = (data: Buffer, target?: number) => {
     const pad = align4(offset) - offset;
     if (pad > 0) {
       chunks.push(Buffer.alloc(pad));
       offset += pad;
     }
-    bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: data.length, target });
+    bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: data.length, ...(target ? { target } : {}) });
     chunks.push(data);
     offset += data.length;
     return bufferViews.length - 1;
@@ -415,15 +485,29 @@ export function encodeGlb(meshes: MeshData[], generator = "EUM 3D SHOWROOM PRO")
     accessors.push({ bufferView: idxView, componentType: 5125, count: m.indices.length, type: "SCALAR" });
     const idxAccessor = accessors.length - 1;
 
+    let uvAccessor: number | undefined;
+    let textureIndex: number | undefined;
+    if (m.uvs && m.texture && m.uvs.length === vertexCount * 2) {
+      const uvView = pushView(Buffer.from(m.uvs.buffer, m.uvs.byteOffset, m.uvs.byteLength), 34962);
+      accessors.push({ bufferView: uvView, componentType: 5126, count: vertexCount, type: "VEC2" });
+      uvAccessor = accessors.length - 1;
+      const imageView = pushView(m.texture.data);
+      images.push({ bufferView: imageView, mimeType: m.texture.mimeType, ...(m.texture.name ? { name: m.texture.name } : {}) });
+      textures.push({ sampler: 0, source: images.length - 1 });
+      textureIndex = textures.length - 1;
+    }
+
     const color = m.color ?? [0.62, 0.66, 0.71];
     const opacity = m.opacity ?? 1;
     const material: Record<string, unknown> = {
       name: `${m.name} Material`,
       doubleSided: true,
       pbrMetallicRoughness: {
-        baseColorFactor: [color[0], color[1], color[2], opacity],
-        metallicFactor: m.metalness ?? 0.85,
-        roughnessFactor: m.roughness ?? 0.35,
+        // 텍스처가 있으면 색을 더하지 않도록 흰색을 곱한다.
+        baseColorFactor: textureIndex !== undefined ? [1, 1, 1, opacity] : [color[0], color[1], color[2], opacity],
+        metallicFactor: textureIndex !== undefined ? 0 : m.metalness ?? 0.85,
+        roughnessFactor: textureIndex !== undefined ? Math.max(0.7, m.roughness ?? 0.85) : m.roughness ?? 0.35,
+        ...(textureIndex !== undefined ? { baseColorTexture: { index: textureIndex, texCoord: 0 } } : {}),
       },
     };
     if (opacity < 1) material.alphaMode = "BLEND";
@@ -434,7 +518,11 @@ export function encodeGlb(meshes: MeshData[], generator = "EUM 3D SHOWROOM PRO")
       name: m.name,
       primitives: [
         {
-          attributes: normAccessor !== undefined ? { POSITION: posAccessor, NORMAL: normAccessor } : { POSITION: posAccessor },
+          attributes: {
+            ...(normAccessor !== undefined ? { NORMAL: normAccessor } : {}),
+            POSITION: posAccessor,
+            ...(uvAccessor !== undefined ? { TEXCOORD_0: uvAccessor } : {}),
+          },
           indices: idxAccessor,
           material: materials.length - 1,
           mode: 4,
@@ -461,6 +549,13 @@ export function encodeGlb(meshes: MeshData[], generator = "EUM 3D SHOWROOM PRO")
     accessors,
     bufferViews,
     buffers: [{ byteLength: binPadded.length }],
+    ...(images.length > 0
+      ? {
+          images,
+          textures,
+          samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }],
+        }
+      : {}),
   };
   const jsonText = JSON.stringify(gltf);
   const jsonPadded = Buffer.concat([Buffer.from(jsonText, "utf8"), Buffer.alloc(align4(Buffer.byteLength(jsonText)) - Buffer.byteLength(jsonText), 0x20)]);
@@ -761,15 +856,21 @@ export function optimizeMeshes(meshes: MeshData[]): { meshes: MeshData[]; report
     const map = new Map<string, number>();
     const positions: number[] = [];
     const normals: number[] = [];
+    const uvs: number[] | null = mesh.uvs ? [] : null;
     const remap = new Uint32Array(mesh.positions.length / 3);
     for (let i = 0; i < mesh.positions.length; i += 3) {
-      const key = `${mesh.positions[i].toFixed(5)}|${mesh.positions[i + 1].toFixed(5)}|${mesh.positions[i + 2].toFixed(5)}`;
+      const u = uvs ? mesh.uvs![(i / 3) * 2] : 0;
+      const v = uvs ? mesh.uvs![(i / 3) * 2 + 1] : 0;
+      const key = uvs
+        ? `${mesh.positions[i].toFixed(5)}|${mesh.positions[i + 1].toFixed(5)}|${mesh.positions[i + 2].toFixed(5)}|${u.toFixed(4)}|${v.toFixed(4)}`
+        : `${mesh.positions[i].toFixed(5)}|${mesh.positions[i + 1].toFixed(5)}|${mesh.positions[i + 2].toFixed(5)}`;
       let idx = map.get(key);
       if (idx === undefined) {
         idx = positions.length / 3;
         map.set(key, idx);
         positions.push(mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]);
         normals.push(mesh.normals[i], mesh.normals[i + 1], mesh.normals[i + 2]);
+        if (uvs) uvs.push(u, v);
       } else {
         mergedVertices += 1;
       }
@@ -792,6 +893,7 @@ export function optimizeMeshes(meshes: MeshData[]): { meshes: MeshData[]; report
       ...mesh,
       positions: new Float32Array(positions),
       normals: new Float32Array(normals),
+      ...(uvs ? { uvs: new Float32Array(uvs) } : {}),
       indices: new Uint32Array(indices),
     };
   });

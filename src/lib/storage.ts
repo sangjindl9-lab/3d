@@ -98,15 +98,32 @@ export function mimeFor(filename: string): string {
   return map[ext] ?? "application/octet-stream";
 }
 
-/** 썸네일 SVG — 서버에서 즉시 생성(브라우저 없이) */
+/** 썸네일 SVG — 서버에서 즉시 생성(브라우저 없이). 파일마다 다른 미리보기·지문을 포함한다. */
 export function buildThumbnailSvg(args: {
   title: string;
   industry: string;
   subtitle: string;
   accent: string;
   badge?: string;
+  /** data:image/...;base64 미리보기(도면 원본·3D 뷰 등) */
+  preview?: string | null;
+  /** 실제 측정치 라인 (파일마다 다름) */
+  lines?: string[];
+  /** 파일 지문(해시) — 동일 텍스트 썸네일이라도 시각적으로 구분되게 한다 */
+  fingerprint?: string | null;
 }): string {
   const esc = (s: string) => s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c] ?? c);
+  const fp = args.fingerprint ?? `${args.title}|${args.subtitle}`;
+  let hash = 0;
+  for (let i = 0; i < fp.length; i++) hash = (hash * 31 + fp.charCodeAt(i)) >>> 0;
+  const bars = Array.from({ length: 14 }, (_, i) => {
+    const v = (hash >>> (i % 24)) ^ (hash * (i + 3));
+    return 18 + (v % 96);
+  });
+  const barSvg = bars
+    .map((h, i) => `<rect x="${640 + i * 20}" y="${430 - h}" width="12" height="${h}" rx="3" fill="${args.accent}" fill-opacity="${0.18 + (i % 5) * 0.08}"/>`)
+    .join("");
+  const lines = (args.lines ?? []).slice(0, 3);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -121,15 +138,18 @@ export function buildThumbnailSvg(args: {
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
     </pattern>
+    <clipPath id="previewClip"><rect x="540" y="96" width="360" height="268" rx="14"/></clipPath>
   </defs>
   <rect width="960" height="540" fill="url(#bg)"/>
   <rect width="960" height="540" fill="url(#grid)"/>
   <rect width="960" height="540" fill="url(#fade)"/>
   <text x="64" y="96" fill="#ffffff" fill-opacity="0.62" font-family="Pretendard,system-ui,sans-serif" font-size="22" letter-spacing="6">EUM 3D SHOWROOM PRO</text>
-  <text x="64" y="392" fill="#ffffff" font-family="Pretendard,system-ui,sans-serif" font-size="54" font-weight="700">${esc(args.title.slice(0, 32))}</text>
-  <text x="64" y="440" fill="#ffffff" fill-opacity="0.75" font-family="Pretendard,system-ui,sans-serif" font-size="26">${esc(args.subtitle.slice(0, 60))}</text>
+  <text x="64" y="368" fill="#ffffff" font-family="Pretendard,system-ui,sans-serif" font-size="52" font-weight="700">${esc(args.title.slice(0, 30))}</text>
+  <text x="64" y="412" fill="#ffffff" fill-opacity="0.75" font-family="Pretendard,system-ui,sans-serif" font-size="24">${esc(args.subtitle.slice(0, 52))}</text>
+  ${lines.map((line, i) => `<text x="64" y="${448 + i * 26}" fill="#ffffff" fill-opacity="0.6" font-family="Pretendard,system-ui,sans-serif" font-size="18">${esc(line.slice(0, 60))}</text>`).join("")}
+  ${args.preview ? `<rect x="534" y="90" width="372" height="280" rx="18" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.18"/><image href="${esc(args.preview)}" x="540" y="96" width="360" height="268" preserveAspectRatio="xMidYMid meet" clip-path="url(#previewClip)"/>` : `<g>${barSvg}</g>`}
+  ${args.badge ? `<rect x="700" y="30" width="196" height="42" rx="21" fill="#ffffff" fill-opacity="0.08" stroke="#ffffff" stroke-opacity="0.2"/><text x="798" y="58" text-anchor="middle" fill="#ffffff" fill-opacity="0.85" font-family="Pretendard,system-ui,sans-serif" font-size="19">${esc(args.badge)}</text>` : ""}
   <rect x="64" y="470" width="${Math.max(120, args.industry.length * 22 + 48)}" height="42" rx="21" fill="${args.accent}" fill-opacity="0.18" stroke="${args.accent}" stroke-opacity="0.55"/>
   <text x="${64 + Math.max(120, args.industry.length * 22 + 48) / 2}" y="498" text-anchor="middle" fill="${args.accent}" font-family="Pretendard,system-ui,sans-serif" font-size="20">${esc(args.industry)}</text>
-  ${args.badge ? `<rect x="700" y="70" width="196" height="46" rx="23" fill="#ffffff" fill-opacity="0.08" stroke="#ffffff" stroke-opacity="0.2"/><text x="798" y="100" text-anchor="middle" fill="#ffffff" fill-opacity="0.85" font-family="Pretendard,system-ui,sans-serif" font-size="19">${esc(args.badge)}</text>` : ""}
 </svg>`;
 }

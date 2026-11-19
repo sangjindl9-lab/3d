@@ -156,6 +156,8 @@ export class ShowroomEngine {
     z: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
   };
   private referenceTexture: THREE.Texture | null = null;
+  private referenceLoaded = false;
+  private referenceOverlays: THREE.Mesh[] = [];
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -352,29 +354,63 @@ export class ShowroomEngine {
   }
 
   private loadReferenceTexture(url: string): void {
-    new THREE.TextureLoader().load(url, (texture) => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      this.referenceTexture = texture;
-      this.applyReferenceTexture();
-    });
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+        texture.needsUpdate = true;
+        this.referenceTexture = texture;
+        this.referenceLoaded = true;
+        this.applyReferenceTexture();
+      },
+      undefined,
+      () => {
+        // 참고 이미지가 없어도 GLB 에 내장된 텍스처·메시는 그대로 표시한다.
+        this.options.onError?.("참고 도면 이미지를 불러오지 못했습니다. 모델 자체 텍스처로 표시합니다.");
+      },
+    );
   }
 
+  /**
+   * 참고 도면 텍스처를 도면 패널/블록의 정면에 정확히 맞춰 입힌다.
+   * - GLB 에 텍스처가 내장되어 있으면 그대로 쓰고 중복 오버레이를 만들지 않는다.
+   * - 로딩 순서(텍스처가 finishLoad 전/후 도착)와 무관하게 여러 번 호출해도 안전하다.
+   */
   private applyReferenceTexture(): void {
-    if (!this.referenceTexture) return;
+    if (!this.referenceTexture || !this.referenceLoaded) return;
     const texture = this.referenceTexture;
     for (const node of this.parts.values()) {
-      if (node.meta.nodeName !== "DRAWING_PANEL") continue;
-      const box = new THREE.Box3().setFromObject(node.mesh);
+      if (node.meta.nodeName !== "DRAWING_PANEL" && node.meta.nodeName !== "DRAWING_BLOCK") continue;
+      if (node.material.map) continue;
+      const geometry = node.mesh.geometry;
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      const box = geometry.boundingBox ?? new THREE.Box3();
       const size = new THREE.Vector3();
       box.getSize(size);
+      if (size.x <= 0 || size.y <= 0) continue;
       const image = texture.image as { width?: number; height?: number } | undefined;
-      const aspect = image && image.height && image.width ? image.width / image.height : 1.414;
-      const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
-      node.mesh.material = material;
+      const aspect = image && image.width && image.height ? image.width / image.height : 1.414;
+      for (const overlay of this.referenceOverlays.filter((o) => o.userData.partId === node.meta.id)) {
+        overlay.parent?.remove(overlay);
+        overlay.geometry.dispose();
+        this.referenceOverlays = this.referenceOverlays.filter((o) => o !== overlay);
+      }
+      const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false, side: THREE.FrontSide });
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-      plane.scale.set(size.x * 0.98, Math.min(size.y * 0.98, (size.x * 0.98) / aspect), 1);
-      plane.position.set(0, 0, size.z / 2 + 0.001);
-      node.group.add(plane);
+      let width = size.x * 0.985;
+      let height = width / aspect;
+      if (height > size.y * 0.985) {
+        height = size.y * 0.985;
+        width = height * aspect;
+      }
+      plane.scale.set(width, height, 1);
+      plane.position.set(0, 0, size.z / 2 + Math.max(0.0005, size.z * 0.02));
+      plane.renderOrder = 2;
+      plane.userData.partId = node.meta.id;
+      plane.userData.referenceOverlay = true;
+      node.mesh.add(plane);
+      this.referenceOverlays.push(plane);
     }
   }
 
@@ -404,7 +440,16 @@ export class ShowroomEngine {
       flatShading: false,
     });
     if (sourceMaterial && "map" in sourceMaterial && (sourceMaterial as THREE.MeshStandardMaterial).map) {
-      material.map = (sourceMaterial as THREE.MeshStandardMaterial).map;
+      const map = (sourceMaterial as THREE.MeshStandardMaterial).map!;
+      material.map = map;
+      // 텍스처(도면 원본 등)가 있으면 색을 곱하지 않는다. 그렇지 않으면 도면이 부품 색으로 물든다.
+      material.color = new THREE.Color(0xffffff);
+      material.metalness = 0;
+      material.roughness = 0.9;
+      map.colorSpace = THREE.SRGBColorSpace;
+      map.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      map.needsUpdate = true;
+      material.needsUpdate = true;
     }
     material.emissive = new THREE.Color(0x000000);
     material.clippingPlanes = [];
