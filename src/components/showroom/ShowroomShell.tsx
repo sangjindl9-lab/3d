@@ -92,6 +92,7 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
   const [clip, setClip] = useState<{ x: number | null; y: number | null; z: number | null }>({ x: null, y: null, z: null });
   const [search, setSearch] = useState("");
   const [annotations, setAnnotations] = useState<EngineAnnotation[]>(payload.annotations);
+  const annotationsRef = useRef<EngineAnnotation[]>(payload.annotations);
   const [annotationDraft, setAnnotationDraft] = useState<{ position: [number, number, number]; title: string; body: string } | null>(null);
   const [activeAnnotation, setActiveAnnotation] = useState<EngineAnnotation | null>(null);
   const [sequences] = useState(payload.sequences);
@@ -118,6 +119,10 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
   const hasFeature = useCallback((f: FeatureKey) => features.includes(f), [features]);
   const editable = mode === "editor" && payload.canEdit;
   const shareUrl = share ? `${typeof window !== "undefined" ? window.location.origin : ""}/share/${share.slug}` : "";
+
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -154,7 +159,7 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
       onLoaded: () => setReady(true),
       onError: (message) => setLoadError(message),
       onAnnotationActivate: (id) => {
-        const hit = payload.annotations.find((a) => a.id === id) ?? null;
+        const hit = annotationsRef.current.find((a) => a.id === id) ?? null;
         setActiveAnnotation(hit);
       },
       onAnnotationCreate: (position) => {
