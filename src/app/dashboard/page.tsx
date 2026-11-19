@@ -143,6 +143,7 @@ export default async function DashboardPage() {
                         </Link>
                         <p className="mt-0.5 truncate text-[10px] text-slate-500">
                           {industryLabel(project.industry)} · 부품 {project._count.parts}개
+                          {project.client ? ` · ${project.client.name}` : ""}
                         </p>
                       </div>
                       <ProjectMenu id={project.id} shareSlug={project.shareLinks[0]?.slug ?? null} />

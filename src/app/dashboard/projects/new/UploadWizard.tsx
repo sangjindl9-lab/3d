@@ -33,9 +33,11 @@ const STEPS = [
 
 const ACCEPT = ".dwg,.dxf,.pdf,.jpg,.jpeg,.png,.tif,.tiff,.step,.stp,.igs,.iges,.stl,.obj,.fbx,.glb,.gltf,.3mf,.ifc,.sldprt,.sldasm,.ipt,.iam,.catpart,.catproduct,.prt,.asm,.skp";
 
-export default function UploadWizard() {
+type ClientOption = { id: string; name: string; plan: string };
+
+export default function UploadWizard({ clients = [] }: { clients?: ClientOption[] }) {
   const [phase, setPhase] = useState<"info" | "upload" | "process" | "done">("info");
-  const [form, setForm] = useState({ title: "", industry: "MOLD", description: "", template: "MOLD_TECH" });
+  const [form, setForm] = useState({ title: "", industry: "MOLD", description: "", template: "MOLD_TECH", clientId: clients[0]?.id ?? "" });
   const [projectId, setProjectId] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [uploads, setUploads] = useState<UploadInfo[]>([]);
@@ -78,7 +80,7 @@ export default function UploadWizard() {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: form.title, description: form.description, industry: form.industry, template: form.template }),
+        body: JSON.stringify({ title: form.title, description: form.description, industry: form.industry, template: form.template, clientId: form.clientId || undefined }),
       });
       const data = (await res.json().catch(() => ({}))) as { project?: { id: string }; error?: string };
       if (!res.ok || !data.project) throw new Error(data.error ?? "프로젝트를 만들지 못했습니다.");
@@ -227,6 +229,18 @@ export default function UploadWizard() {
                 ))}
               </select>
             </div>
+            {clients.length > 0 ? (
+              <div className="md:col-span-2">
+                <label className="label">소속 고객사 (관리자 배정)</label>
+                <select className="input" value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} · {client.plan}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="md:col-span-2">
               <label className="label">설명</label>
               <textarea className="input" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="고객에게 보여줄 제품 설명, 주요 사양, 활용 목적" />

@@ -391,12 +391,14 @@ export class ShowroomEngine {
     const preset = materialPreset(meta.material);
     const sourceMaterial = Array.isArray(object.material) ? object.material[0] : object.material;
     const baseColor = new THREE.Color(meta.color || preset.color);
+    const presetOpacity = "opacity" in preset ? (preset as { opacity?: number }).opacity ?? 1 : 1;
+    const initialOpacity = meta.opacity < 1 ? meta.opacity : presetOpacity;
     const material = new THREE.MeshStandardMaterial({
       color: baseColor,
       metalness: preset.metalness,
       roughness: preset.roughness,
-      transparent: meta.opacity < 1,
-      opacity: meta.opacity,
+      transparent: initialOpacity < 1,
+      opacity: initialOpacity,
       envMapIntensity: 1.1,
       side: THREE.DoubleSide,
       flatShading: false,
@@ -428,7 +430,7 @@ export class ShowroomEngine {
       material,
       baseCenter: center.clone(),
       baseEmissive: new THREE.Color(0x000000),
-      baseOpacity: meta.opacity,
+      baseOpacity: initialOpacity,
       color: baseColor,
       explodeVector: new THREE.Vector3(...meta.exploded).normalize().multiplyScalar(meta.explodedDistance),
       animOffset: new THREE.Vector3(),
@@ -559,6 +561,8 @@ export class ShowroomEngine {
   }
 
   private syncOrthoFromPersp(): void {
+    this.ortho.position.copy(this.camera.position);
+    this.ortho.quaternion.copy(this.camera.quaternion);
     const distance = this.ortho.position.distanceTo(this.controls.target);
     const height = 2 * distance * Math.tan(((this.persp.fov * DEG) / 2));
     const aspect = this.persp.aspect;
@@ -566,8 +570,6 @@ export class ShowroomEngine {
     this.ortho.right = (height * aspect) / 2;
     this.ortho.top = height / 2;
     this.ortho.bottom = -height / 2;
-    this.ortho.position.copy(this.camera.position);
-    this.ortho.quaternion.copy(this.camera.quaternion);
     this.ortho.zoom = 1;
     this.ortho.updateProjectionMatrix();
   }

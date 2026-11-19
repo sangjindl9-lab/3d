@@ -20,7 +20,7 @@
 | DB/ORM | Prisma 6 + SQLite (`DATABASE_URL="file:./dev.db"`) |
 | 인증 | 자체 세션(HTTP-only 쿠키) + Node `scrypt` 해시 |
 | QR | `qrcode` (PNG/SVG 서버 생성) |
-| 테스트 | Vitest 3 (44 케이스) + HTTP 스모크 스크립트 |
+| 테스트 | Vitest 3 (46 케이스) + HTTP 스모크 스크립트 |
 
 ## 2. 실행 방법
 
@@ -42,7 +42,7 @@ npm run start             # http://localhost:3210
 
 ```bash
 npm run typecheck
-npm run test              # vitest, 44 tests
+npm run test              # vitest, 46 tests
 npm run build
 npm run smoke             # 실제 서버 기동 후 페이지/API 33개 체크
 ```
@@ -201,10 +201,10 @@ eum3d-showroom-pro/
 | `npx prisma generate && prisma db push && tsx prisma/seed.ts` | 성공 (고객사 3, 사용자 5, 데모 5, 공유 링크 5) |
 | `npm run typecheck` | 오류 0 |
 | `npm run build` | 성공 (앱 라우트 35개) |
-| `npm run test` | **44 / 44 통과** |
+| `npm run test` | **46 / 46 통과** |
 | `npm run smoke` | **33 / 33 통과** |
 
-테스트 커버리지: 형식 판별 8, GLB 4, 파이프라인 5(STL/DXF/STEP/누락), 라이선스 7, 권한 5, 인증·브랜딩 8, 공유·QR 8.
+테스트 커버리지: 형식 판별 8, GLB 4, Three.js 로더 호환 2, 파이프라인 5(STL/DXF/STEP/누락), 라이선스 7, 권한 5, 인증·브랜딩 8, 공유·QR 8.
 
 ## 10. 알려진 제약 · 다음 단계
 

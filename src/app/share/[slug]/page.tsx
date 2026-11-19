@@ -47,6 +47,16 @@ export default async function SharePage({ params }: Params) {
 
   if (!link.isActive) return inner;
   if (link.expiresAt && link.expiresAt.getTime() < Date.now()) return inner;
+  if (link.project.client && new Date(link.project.client.expiresAt).getTime() < Date.now()) {
+    return (
+      <div className="grid min-h-[100dvh] place-items-center px-4 text-center">
+        <div className="card max-w-md p-8">
+          <p className="text-sm font-bold text-slate-200">고객사 라이선스가 만료되었습니다</p>
+          <p className="mt-2 text-xs text-slate-500">쇼룸 소유자에게 라이선스 갱신을 요청하세요.</p>
+        </div>
+      </div>
+    );
+  }
   if (link.project.status !== "READY") {
     return (
       <div className="grid min-h-[100dvh] place-items-center px-4 text-center">

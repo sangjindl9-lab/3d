@@ -299,6 +299,9 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
     }
   };
 
+  const sequenceAllowed = (kind: string) =>
+    kind === "MOLD" ? hasFeature("MOLD_ANIM") : kind === "MACHINE" ? hasFeature("MACHINE_ANIM") : true;
+
   const selectedSequence = sequences.find((s) => s.id === activeSequenceId) ?? null;
 
   const loadSequence = (id: string) => {
@@ -860,6 +863,7 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
                           <input
                             type="number"
                             step="0.1"
+                            disabled={!editable}
                             className="input !px-2 !py-1 !text-[11px]"
                             value={Number(selected.exploded[i].toFixed(2))}
                             onChange={(e) => {
@@ -882,6 +886,7 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
                         type="range"
                         min={0}
                         max={200}
+                        disabled={!editable}
                         value={Math.round(selected.explodedDistance * 100)}
                         onChange={(e) => {
                           const value = Number(e.target.value) / 100;
@@ -898,6 +903,10 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
                         className={`btn btn-sm w-full ${dragMode ? "btn-primary" : "btn-ghost"}`}
                         onClick={() => {
                           const next = !dragMode;
+                          if (next && explode < 0.05) {
+                            setExplode(1);
+                            engineRef.current?.setExplode(1);
+                          }
                           setDragMode(next);
                           engineRef.current?.setDragMode(next, selected.id);
                         }}
@@ -918,24 +927,29 @@ export default function ShowroomShell({ payload, mode, homeHref }: Props) {
             {tab === "anim" ? (
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  {sequences.map((seq) => (
-                    <button
-                      key={seq.id}
-                      type="button"
-                      onClick={() => loadSequence(seq.id)}
-                      className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition ${
-                        activeSequenceId === seq.id ? "border-teal-400/50 bg-teal-400/10" : "border-white/10 hover:bg-white/5"
-                      }`}
-                    >
-                      <span className="text-[11px] font-semibold text-slate-200">{seq.name}</span>
-                      <span className="badge !text-[9px]">{seq.kind}</span>
-                    </button>
-                  ))}
+                  {sequences.map((seq) => {
+                    const allowed = sequenceAllowed(seq.kind);
+                    return (
+                      <button
+                        key={seq.id}
+                        type="button"
+                        disabled={!allowed}
+                        title={allowed ? undefined : "현재 플랜에 포함되지 않은 기능입니다."}
+                        onClick={() => loadSequence(seq.id)}
+                        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition disabled:opacity-40 ${
+                          activeSequenceId === seq.id ? "border-teal-400/50 bg-teal-400/10" : "border-white/10 hover:bg-white/5"
+                        }`}
+                      >
+                        <span className="text-[11px] font-semibold text-slate-200">{seq.name}</span>
+                        <span className="badge !text-[9px]">{allowed ? seq.kind : "플랜 제한"}</span>
+                      </button>
+                    );
+                  })}
                 </div>
                 {selectedSequence ? (
                   <>
                     <div className="flex items-center gap-1">
-                      <button type="button" className="btn btn-primary btn-sm flex-1" onClick={() => (seqState?.playing ? engineRef.current?.pauseSequence() : playSequence())}>
+                      <button type="button" className="btn btn-primary btn-sm flex-1" disabled={!sequenceAllowed(selectedSequence.kind)} onClick={() => (seqState?.playing ? engineRef.current?.pauseSequence() : playSequence())}>
                         {seqState?.playing ? "일시정지" : "재생"}
                       </button>
                       <Btn onClick={() => { engineRef.current?.stopSequence(); setSeqState((prev) => (prev ? { ...prev, playing: false, progress: 0, time: 0 } : prev)); }}>정지</Btn>

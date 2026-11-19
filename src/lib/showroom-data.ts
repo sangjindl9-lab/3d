@@ -69,7 +69,7 @@ export async function buildShowroomPayload(projectId: string, options: BuildPayl
   const template = templateByKey(project.template);
   const shareLink = project.shareLinks[0] ?? null;
   const features = project.client ? parseFeatures(project.client.features) : [];
-  const expired = project.client ? new Date(project.client.expiresAt).getTime() < Date.now() : false;
+  const clientExpired = project.client ? new Date(project.client.expiresAt).getTime() < Date.now() : false;
 
   const parts: EnginePart[] = project.parts.map((p) => ({
     id: p.id,
@@ -175,14 +175,14 @@ export async function buildShowroomPayload(projectId: string, options: BuildPayl
         }
       : null,
     availability: {
-      ok: project.status === "READY",
+      ok: project.status === "READY" && !clientExpired,
       reason:
-        project.status === "READY"
-          ? null
-          : project.status === "CONVERT_REQUIRED"
-            ? "이 형식은 외부 CAD 변환기가 필요합니다. STEP/GLB/STL/OBJ 로 변환 후 다시 업로드해 주세요."
-            : expired
-              ? "고객사 라이선스가 만료되어 쇼룸을 표시할 수 없습니다."
+        clientExpired
+          ? "고객사 라이선스가 만료되어 쇼룸을 표시할 수 없습니다. 라이선스 갱신 후 이용해 주세요."
+          : project.status === "READY"
+            ? null
+            : project.status === "CONVERT_REQUIRED"
+              ? "이 형식은 외부 CAD 변환기가 필요합니다. STEP/GLB/STL/OBJ 로 변환 후 다시 업로드해 주세요."
               : "쇼룸이 아직 준비되지 않았습니다.",
     },
   };
