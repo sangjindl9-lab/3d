@@ -1,0 +1,237 @@
+// EUM 3D SHOWROOM PRO — 데이터 모델
+// SQLite 는 Prisma enum 을 지원하지 않으므로 상태/역할/업종은 String + 애플리케이션 검증으로 관리한다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("USER") // ADMIN | CLIENT_ADMIN | USER
+  clientId     String?
+  client       Client?  @relation(fields: [clientId], references: [id])
+  sessions     Session[]
+  projects     Project[] @relation("ProjectOwner")
+  createdAt    DateTime @default(now())
+}
+
+model Client {
+  id           String    @id @default(cuid())
+  name         String
+  slug         String    @unique
+  businessNo   String?
+  contactEmail String?
+  plan         String    @default("STARTER") // STARTER | PROFESSIONAL | ENTERPRISE
+  expiresAt    DateTime
+  maxProjects  Int       @default(5)
+  maxUsers     Int       @default(3)
+  features     String    @default("[]") // JSON string[]
+  logoPath     String?
+  primaryColor String    @default("#2dd4bf")
+  accentColor  String    @default("#38bdf8")
+  slogan       String?
+  headerText   String?
+  footerText   String?
+  createdAt    DateTime  @default(now())
+  users        User[]
+  projects     Project[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  title         String
+  description   String?
+  industry      String   @default("MANUFACTURING")
+  template      String   @default("SHOWCASE")
+  background    String   @default("STUDIO")
+  status        String   @default("DRAFT") // DRAFT | PROCESSING | READY | CONVERT_REQUIRED | FAILED
+  sourceType    String   @default("3D") // 3D | 2D
+  renderMode    String   @default("MESH_3D") // MESH_3D | AI_REFERENCE_3D | AI_REFERENCE_2D
+  isAiReference Boolean  @default(false)
+  aiMode        String? // HEURISTIC_RULES | EXTERNAL_VISION | NONE
+  aiAnalysis    String   @default("{}")
+  modelPath     String?
+  modelFormat   String?
+  referenceImageUrl String?
+  thumbnailPath String?
+  stats         String   @default("{}")
+  isDemo        Boolean  @default(false)
+  isPublicDemo  Boolean  @default(false)
+  clientId      String?
+  client        Client?  @relation(fields: [clientId], references: [id])
+  ownerId       String?
+  owner         User?    @relation("ProjectOwner", fields: [ownerId], references: [id])
+  parts         Part[]
+  annotations   Annotation[]
+  presets       CameraPreset[]
+  sequences     AnimationSequence[]
+  uploads       Upload[]
+  runs          PipelineRun[]
+  shareLinks    ShareLink[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([clientId])
+}
+
+model Part {
+  id               String  @id @default(cuid())
+  projectId        String
+  project          Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  nodeName         String
+  name             String
+  partNumber       String?
+  material         String  @default("STEEL")
+  spec             String?
+  weight           Float?
+  quantity         Int     @default(1)
+  description      String?
+  color            String?
+  order            Int     @default(0)
+  centerX          Float   @default(0)
+  centerY          Float   @default(0)
+  centerZ          Float   @default(0)
+  sizeX            Float   @default(0)
+  sizeY            Float   @default(0)
+  sizeZ            Float   @default(0)
+  explodedX        Float   @default(0)
+  explodedY        Float   @default(1)
+  explodedZ        Float   @default(0)
+  explodedDistance Float   @default(1)
+  isMoldPart       Boolean @default(false)
+  moldRole         String? // CORE | CAVITY | SLIDE | EJECTOR | BASE
+  motionGroup      String? // SPINDLE | GEAR | SHAFT | FAN | ...
+  visible          Boolean @default(true)
+  opacity          Float   @default(1)
+
+  @@index([projectId])
+}
+
+model Annotation {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title      String
+  body       String
+  x          Float
+  y          Float
+  z          Float
+  authorName String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model CameraPreset {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  positionX  Float
+  positionY  Float
+  positionZ  Float
+  targetX    Float
+  targetY    Float
+  targetZ    Float
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model AnimationSequence {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  kind       String // ASSEMBLY | MOLD | MACHINE | TURNTABLE
+  durationMs Int      @default(6000)
+  steps      String   @default("[]") // JSON
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Upload {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  originalName   String
+  storedPath     String
+  size           Int
+  sha256         String
+  detectedFormat String
+  declaredExt    String
+  kind           String // 2D | 3D | UNKNOWN
+  integrity      String   @default("OK") // OK | WARNING | FAILED
+  meta           String   @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model PipelineRun {
+  id         String          @id @default(cuid())
+  projectId  String
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status     String          @default("RUNNING") // RUNNING | OK | WARN | FAILED
+  startedAt  DateTime        @default(now())
+  finishedAt DateTime?
+  stages     PipelineStage[]
+
+  @@index([projectId])
+}
+
+model PipelineStage {
+  id         String      @id @default(cuid())
+  runId      String
+  run        PipelineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  step       Int
+  key        String
+  label      String
+  status     String      @default("PENDING") // PENDING | RUNNING | OK | WARN | FAILED
+  detail     String?
+  startedAt  DateTime    @default(now())
+  finishedAt DateTime?
+}
+
+model ShareLink {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  slug          String   @unique
+  passwordHash  String?
+  expiresAt     DateTime?
+  isActive      Boolean  @default(true)
+  allowDownload Boolean  @default(false)
+  viewCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  detail    String   @default("{}")
+  createdAt DateTime @default(now())
+}
